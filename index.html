@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Hockey Tracker</title>
+
+<!-- Готово к превращению в PWA: подключите manifest.json и service worker сюда -->
+<!-- <link rel="manifest" href="manifest.json"> -->
+<meta name="theme-color" content="#0F0F12">
+
+<link rel="stylesheet" href="style.css">
+<!-- Chart.js для графиков прогресса -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Весь интерфейс живёт внутри одного "телефона", чтобы приложение выглядело как мобильное -->
+<div class="app-shell">
+
+  <!-- ============ HEADER (динамически меняет заголовок под текущий экран) ============ -->
+  <header class="app-header">
+    <h1 id="screen-title">Dashboard</h1>
+    <div class="header-level" id="header-level-badge">Lvl 1</div>
+  </header>
+
+  <!-- ============ SCREENS ============ -->
+  <main class="screens">
+
+    <!-- ---------------- DASHBOARD ---------------- -->
+    <section class="screen active" id="screen-dashboard">
+
+      <p class="greeting" id="greeting-text">Good morning, Sasha</p>
+
+      <!-- Карточка XP / уровня -->
+      <div class="card xp-card">
+        <div class="xp-top">
+          <span class="xp-level" id="xp-level-text">Level 1</span>
+          <span class="xp-count" id="xp-count-text">0 / 500 XP</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="xp-progress-fill" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Карточка тренировки на сегодня -->
+      <div class="card today-card">
+        <div class="card-label">Today's training</div>
+        <h2 class="today-name" id="today-training-name">Strength workout</h2>
+        <div class="progress-row">
+          <div class="progress-track">
+            <div class="progress-fill" id="today-progress-fill" style="width:0%"></div>
+          </div>
+          <span class="progress-percent" id="today-progress-percent">0%</span>
+        </div>
+        <button class="btn-primary" id="btn-complete-training">Complete training</button>
+      </div>
+
+      <!-- Статистика -->
+      <div class="stats-grid">
+        <div class="card stat-card">
+          <div class="stat-icon">🔥</div>
+          <div class="stat-value" id="stat-streak">0 days</div>
+          <div class="stat-label">Current streak</div>
+        </div>
+        <div class="card stat-card">
+          <div class="stat-icon">🏋️</div>
+          <div class="stat-value" id="stat-total-workouts">0</div>
+          <div class="stat-label">Total workouts</div>
+        </div>
+        <div class="card stat-card">
+          <div class="stat-icon">⚖️</div>
+          <div class="stat-value" id="stat-weight">— kg</div>
+          <div class="stat-label">Current weight</div>
+        </div>
+      </div>
+
+      <!-- Ежедневный чеклист -->
+      <div class="card checklist-card">
+        <div class="card-label">Daily checklist</div>
+        <ul class="checklist" id="daily-checklist">
+          <li data-key="workout"><label><input type="checkbox"><span class="checkbox-visual"></span>Workout</label></li>
+          <li data-key="stretching"><label><input type="checkbox"><span class="checkbox-visual"></span>Stretching</label></li>
+          <li data-key="water"><label><input type="checkbox"><span class="checkbox-visual"></span>Water</label></li>
+          <li data-key="sleep"><label><input type="checkbox"><span class="checkbox-visual"></span>Sleep</label></li>
+        </ul>
+      </div>
+
+    </section>
+
+    <!-- ---------------- TRAINING ---------------- -->
+    <section class="screen" id="screen-training">
+
+      <div class="section-header-row">
+        <div class="card-label">Choose a workout</div>
+        <button class="btn-icon" id="btn-add-training" title="Add new training">+</button>
+      </div>
+
+      <!-- Список тренировок (кнопки-таблетки) -->
+      <div class="training-list" id="training-list"></div>
+
+      <!-- Детальная карточка выбранной тренировки -->
+      <div class="card training-detail" id="training-detail" style="display:none;">
+        <div class="training-detail-header">
+          <h2 id="training-detail-name">Strength</h2>
+          <button class="btn-icon" id="btn-add-exercise" title="Add exercise">+</button>
+        </div>
+        <div class="exercise-list" id="exercise-list"></div>
+        <button class="btn-primary" id="btn-finish-training">Finish this training</button>
+      </div>
+
+    </section>
+
+    <!-- ---------------- PROGRESS ---------------- -->
+    <section class="screen" id="screen-progress">
+
+      <div class="section-header-row">
+        <div class="card-label">Your measurements</div>
+        <button class="btn-icon" id="btn-add-measurement" title="Add measurement">+</button>
+      </div>
+
+      <div class="card chart-card">
+        <div class="metric-tabs" id="metric-tabs">
+          <button class="metric-tab active" data-metric="weight">Weight</button>
+          <button class="metric-tab" data-metric="height">Height</button>
+          <button class="metric-tab" data-metric="strength">Strength</button>
+          <button class="metric-tab" data-metric="speed">Speed</button>
+          <button class="metric-tab" data-metric="jump">Jump</button>
+          <button class="metric-tab" data-metric="stickhandling">Stick time</button>
+        </div>
+        <canvas id="progress-chart" height="220"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-label">History</div>
+        <div class="measurement-history" id="measurement-history"></div>
+      </div>
+
+    </section>
+
+    <!-- ---------------- CALENDAR ---------------- -->
+    <section class="screen" id="screen-calendar">
+      <div class="card">
+        <div class="calendar-legend">
+          <span><i class="dot dot-completed"></i>Completed</span>
+          <span><i class="dot dot-partial"></i>Partial</span>
+          <span><i class="dot dot-missed"></i>Missed</span>
+        </div>
+        <div class="contribution-grid" id="contribution-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Recent activity</div>
+        <div class="activity-list" id="activity-list"></div>
+      </div>
+    </section>
+
+    <!-- ---------------- PROFILE ---------------- -->
+    <section class="screen" id="screen-profile">
+
+      <div class="card profile-card">
+        <div class="profile-avatar">🏒</div>
+        <div class="profile-name" id="profile-name-display">Sasha</div>
+        <div class="profile-sub" id="profile-sub-display">Ice Hockey · Forward</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Athlete info</div>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="profile-name" value="Sasha">
+        </label>
+        <label class="field">
+          <span>Sport</span>
+          <input type="text" id="profile-sport" value="Ice Hockey">
+        </label>
+        <label class="field">
+          <span>Position</span>
+          <input type="text" id="profile-position" value="Forward">
+        </label>
+        <label class="field">
+          <span>Team</span>
+          <input type="text" id="profile-team" placeholder="Your team">
+        </label>
+        <label class="field">
+          <span>Season goals</span>
+          <textarea id="profile-goals" rows="3" placeholder="e.g. Improve skating speed by 10%"></textarea>
+        </label>
+        <button class="btn-primary" id="btn-save-profile">Save profile</button>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Achievements</div>
+        <div class="achievements-grid" id="achievements-grid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Data</div>
+        <div class="data-actions">
+          <button class="btn-secondary" id="btn-export">Export data</button>
+          <button class="btn-secondary" id="btn-import">Import data</button>
+          <input type="file" id="import-file-input" accept="application/json" style="display:none;">
+          <button class="btn-danger" id="btn-reset">Reset data</button>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ============ BOTTOM NAVIGATION ============ -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-screen="dashboard">
+      <span class="nav-icon">🏠</span><span class="nav-label">Dashboard</span>
+    </button>
+    <button class="nav-item" data-screen="training">
+      <span class="nav-icon">🏋️</span><span class="nav-label">Training</span>
+    </button>
+    <button class="nav-item" data-screen="progress">
+      <span class="nav-icon">📈</span><span class="nav-label">Progress</span>
+    </button>
+    <button class="nav-item" data-screen="calendar">
+      <span class="nav-icon">📅</span><span class="nav-label">Calendar</span>
+    </button>
+    <button class="nav-item" data-screen="profile">
+      <span class="nav-icon">👤</span><span class="nav-label">Profile</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- ============ MODAL (переиспользуемое окно для всех форм) ============ -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">Title</h3>
+      <button class="btn-icon" id="modal-close">×</button>
+    </div>
+    <div class="modal-body" id="modal-body"><!-- Контент подставляется через JS --></div>
+  </div>
+</div>
+
+<!-- ============ TOAST (уведомления, например +50 XP) ============ -->
+<div class="toast" id="toast"></div>
+
+<script src="script.js"></script>
+</body>
+</html>
