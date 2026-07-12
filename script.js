@@ -78,11 +78,10 @@ function createDefaultState() {
       }
     ],
 
-    // История завершённых тренировок (для календаря и ленты активности)
-    history: [],
-
-    // Статус каждого дня для календаря: 'completed' | 'partial'
-    calendarStatus: {},
+    // Каждая завершённая тренировка сохраняется сюда целиком — это единственный
+    // источник правды и для календаря, и для ленты активности.
+    // Форма записи: { date, type, completed, exercises: [{name, completed}], xp }
+    workouts: [],
 
     // Измерения прогресса
     measurements: [
@@ -153,7 +152,39 @@ function migrateDailyFields(s) {
   if (s.todayCompletion.date !== today) {
     s.todayCompletion = { date: today, trainingId: s.todayCompletion.trainingId || 'strength', doneExerciseIds: [] };
   }
+
+  // Миграция со старой структуры (history + calendarStatus) на единый массив workouts.
+  // Так старые сохранённые данные пользователя не теряются при обновлении приложения.
+  if (!Array.isArray(s.workouts)) {
+    const oldHistory = Array.isArray(s.history) ? s.history : [];
+    const oldStatus = s.calendarStatus || {};
+    s.workouts = oldHistory.map(h => ({
+      date: h.date,
+      type: h.trainingName || h.type || 'Training',
+      completed: oldStatus[h.date] === 'completed',
+      exercises: [],
+      xp: h.xp || 50
+    }));
+    delete s.history;
+    delete s.calendarStatus;
+  }
+
   return s;
+}
+
+/* ---------------------------------------------------------------------
+   3b) ХЕЛПЕРЫ: поиск тренировки по дате и её статуса (для Calendar)
+   --------------------------------------------------------------------- */
+function getWorkoutForDate(dateStr) {
+  return state.workouts.find(w => w.date === dateStr);
+}
+
+// Возвращает 'completed' | 'partial' | 'missed' | null (null = будущее / вне периода)
+function getDateStatus(dateStr) {
+  const workout = getWorkoutForDate(dateStr);
+  if (workout) return workout.completed ? 'completed' : 'partial';
+  if (dateStr < todayStr() && dateStr >= state.createdAt) return 'missed';
+  return null;
 }
 
 function saveState() {
@@ -215,15 +246,16 @@ function completeTodayTraining() {
   const today = todayStr();
 
   // Тренировка уже завершена сегодня — не даём начислить повторно
-  if (state.calendarStatus[today] === 'completed') {
+  if (getDateStatus(today) === 'completed') {
     showToast('Already completed today ✅');
     return;
   }
 
   const training = state.trainings.find(t => t.id === state.todayCompletion.trainingId) || state.trainings[0];
   const totalExercises = training.exercises.length;
-  const doneCount = state.todayCompletion.doneExerciseIds.length;
-  const ratio = totalExercises === 0 ? 0 : doneCount / totalExercises;
+  const doneIds = state.todayCompletion.doneExerciseIds;
+  const doneCount = doneIds.length;
+  const isFullyCompleted = totalExercises > 0 && doneCount === totalExercises;
 
   // Обновляем streak: если вчера тоже была тренировка — продолжаем, иначе начинаем заново
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
@@ -235,11 +267,25 @@ function completeTodayTraining() {
   state.lastCompletedDate = today;
   state.totalWorkouts += 1;
 
-  // Статус дня в календаре
-  state.calendarStatus[today] = ratio >= 1 ? 'completed' : (ratio > 0 ? 'partial' : 'partial');
+  // Снимок упражнений на момент завершения — сохраняется НАВСЕГДА в этой записи,
+  // независимо от того, что дальше произойдёт с шаблоном тренировки.
+  const exercisesSnapshot = training.exercises.map(e => ({
+    name: e.name,
+    completed: doneIds.includes(e.id)
+  }));
 
-  // История для ленты активности
-  state.history.unshift({ date: today, trainingName: training.name, xp: 50 });
+  // Если сегодня уже была запись по этой тренировке (на случай повторного вызова) — заменяем её,
+  // иначе добавляем новую запись в конец истории тренировок.
+  const existingIdx = state.workouts.findIndex(w => w.date === today);
+  const workoutEntry = {
+    date: today,
+    type: training.name,
+    completed: isFullyCompleted,
+    exercises: exercisesSnapshot,
+    xp: 50
+  };
+  if (existingIdx === -1) state.workouts.push(workoutEntry);
+  else state.workouts[existingIdx] = workoutEntry;
 
   addXp(50, 'Completed workout');
   checkAchievements();
@@ -317,15 +363,14 @@ function renderDashboard() {
   document.getElementById('today-progress-percent').textContent = `${percent}%`;
 
   const completeBtn = document.getElementById('btn-complete-training');
-  const alreadyDoneToday = state.calendarStatus[todayStr()] === 'completed';
+  const alreadyDoneToday = getDateStatus(todayStr()) === 'completed';
   completeBtn.disabled = alreadyDoneToday;
   completeBtn.textContent = alreadyDoneToday ? 'Completed today ✓' : 'Complete training';
 
   // Stats
   document.getElementById('stat-streak').textContent = `🔥 ${state.streak} days`;
   document.getElementById('stat-total-workouts').textContent = state.totalWorkouts;
-  const lastWeight = state.measurements.filter(m => m.weight).slice(-1)[0];
-  document.getElementById('stat-weight').textContent = lastWeight ? `${lastWeight.weight} kg` : '— kg';
+  document.getElementById('stat-weight').textContent = getLatestWeightLabel();
 
   // Checklist
   document.querySelectorAll('#daily-checklist li').forEach(li => {
@@ -433,7 +478,7 @@ function renderTrainingScreen() {
   });
 
   const finishBtn = document.getElementById('btn-finish-training');
-  const alreadyDoneToday = state.calendarStatus[todayStr()] === 'completed';
+  const alreadyDoneToday = getDateStatus(todayStr()) === 'completed';
   finishBtn.disabled = alreadyDoneToday;
   finishBtn.textContent = alreadyDoneToday ? 'Completed today ✓' : 'Finish this training';
   finishBtn.onclick = completeTodayTraining;
@@ -481,86 +526,109 @@ document.getElementById('btn-add-training').addEventListener('click', () => {
 });
 
 /* ---------------------------------------------------------------------
-   11) RENDER: PROGRESS (Chart.js)
+   11) RENDER: PROGRESS (Chart.js) — единая точка входа для данных о весе.
+   Dashboard, Weight Progress chart, History и Weight Summary — ВСЕ читают
+   именно через getSortedWeightMeasurements(). Никаких отдельных массивов
+   или переменных с копией данных — только один проход по state.measurements.
    --------------------------------------------------------------------- */
-let selectedMetric = 'weight';
 let chartInstance = null;
+const METRIC = 'weight';
+const METRIC_LABEL = 'Weight (kg)';
 
-const METRIC_LABELS = {
-  weight: 'Weight (kg)',
-  height: 'Height (cm)',
-  strength: 'Strength (kg)',
-  speed: 'Speed (sec)',
-  jump: 'Jump (cm)',
-  stickhandling: 'Stickhandling (sec)'
-};
+// Возвращает записи веса из measurements[], отсортированные от СТАРЫХ к НОВЫМ.
+// .slice() перед .sort() — чтобы не мутировать исходный state.measurements при сортировке.
+function getSortedWeightMeasurements() {
+  return state.measurements
+    .filter(m => m[METRIC] !== undefined && m[METRIC] !== null && m[METRIC] !== '')
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
 
-document.querySelectorAll('.metric-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.metric-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    selectedMetric = tab.dataset.metric;
-    renderChart();
-    renderMeasurementHistory();
-  });
-});
+// Текст для карточки "Current weight" на Dashboard — всегда самая свежая ПО ДАТЕ запись,
+// а не последняя добавленная (это и было реальной причиной несостыковок: раньше бралась
+// просто последняя запись массива, что ломалось при вводе задним числом).
+function getLatestWeightLabel() {
+  const points = getSortedWeightMeasurements();
+  if (points.length === 0) return '— kg';
+  return `${points[points.length - 1][METRIC]} kg`;
+}
 
 function renderChart() {
   const canvas = document.getElementById('progress-chart');
-  const points = state.measurements
-    .filter(m => m[selectedMetric] !== undefined && m[selectedMetric] !== '' && m[selectedMetric] !== null)
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const emptyState = document.getElementById('chart-empty-state');
 
-  const labels = points.map(p => formatDateHuman(p.date));
-  const values = points.map(p => Number(p[selectedMetric]));
-
-  if (chartInstance) chartInstance.destroy();
-
-  chartInstance = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: METRIC_LABELS[selectedMetric],
-        data: values,
-        borderColor: '#8B5CF6',
-        backgroundColor: 'rgba(139, 92, 246, 0.15)',
-        pointBackgroundColor: '#A78BFA',
-        pointBorderColor: '#A78BFA',
-        tension: 0.35,
-        fill: true,
-        borderWidth: 3,
-        pointRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { ticks: { color: '#A1A1AA' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-        y: { ticks: { color: '#A1A1AA' }, grid: { color: 'rgba(255,255,255,0.05)' } }
-      }
-    }
-  });
-}
-
-function renderMeasurementHistory() {
-  const container = document.getElementById('measurement-history');
-  const points = state.measurements
-    .filter(m => m[selectedMetric] !== undefined && m[selectedMetric] !== '' && m[selectedMetric] !== null)
-    .sort((a, b) => b.date.localeCompare(a.date));
-
-  if (points.length === 0) {
-    container.innerHTML = `<div class="stat-label">No entries yet for ${METRIC_LABELS[selectedMetric]}.</div>`;
+  // Диагностика по чек-листу из запроса: не молчим, если чего-то не хватает.
+  if (!canvas) {
+    console.error('[Hockey Tracker] #progress-chart canvas not found in the DOM.');
+    return;
+  }
+  if (typeof Chart === 'undefined') {
+    console.error('[Hockey Tracker] Chart.js failed to load (the "Chart" global is undefined). ' +
+      'Check your network connection / ad-blocker — the CDN script tag in <head> may have been blocked.');
+    canvas.style.display = 'none';
+    emptyState.textContent = 'Chart library failed to load';
+    emptyState.style.display = 'flex';
     return;
   }
 
-  container.innerHTML = points.map(p => `
-    <div class="measurement-row">
-      <span class="m-date">${formatDateHuman(p.date)}</span>
-      <span class="m-value">${escapeHtml(String(p[selectedMetric]))}</span>
-    </div>
-  `).join('');
+  const points = getSortedWeightMeasurements();
+
+  // Нет данных — красиво показываем сообщение вместо пустого канваса,
+  // и не пытаемся строить график на пустом наборе точек.
+  if (points.length === 0) {
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    canvas.style.display = 'none';
+    emptyState.textContent = 'No weight data yet';
+    emptyState.style.display = 'flex';
+    return;
+  }
+
+  canvas.style.display = 'block';
+  emptyState.style.display = 'none';
+
+  const labels = points.map(p => formatDateHuman(p.date));
+  const values = points.map(p => Number(p[METRIC]));
+
+  if (chartInstance) chartInstance.destroy();
+
+  try {
+    chartInstance = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: METRIC_LABEL,
+          data: values,
+          borderColor: '#8B5CF6',
+          backgroundColor: 'rgba(139, 92, 246, 0.15)',
+          pointBackgroundColor: '#A78BFA',
+          pointBorderColor: '#A78BFA',
+          tension: 0.35,
+          fill: true,
+          borderWidth: 3,
+          pointRadius: 4,
+          pointHoverRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false, // высота задаётся через CSS у .chart-wrap, а не аспектным соотношением
+        animation: { duration: 300 },
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#A1A1AA' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          y: { ticks: { color: '#A1A1AA' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+        }
+      }
+    });
+  } catch (err) {
+    // Не проглатываем ошибку молча — это именно то место, где раньше график
+    // мог "тихо" не появиться без единого следа в консоли.
+    console.error('[Hockey Tracker] Failed to create the weight chart:', err);
+    canvas.style.display = 'none';
+    emptyState.textContent = 'Could not render chart';
+    emptyState.style.display = 'flex';
+  }
 }
 
 document.getElementById('btn-add-measurement').addEventListener('click', () => {
@@ -594,6 +662,7 @@ document.getElementById('btn-add-measurement').addEventListener('click', () => {
     saveState();
     closeModal();
     renderProgressScreen();
+    renderChart(); // экран Progress точно виден в этот момент — можно безопасно строить график
     if (prCount > 0) {
       addXp(100, 'New personal record');
       saveState();
@@ -601,56 +670,152 @@ document.getElementById('btn-add-measurement').addEventListener('click', () => {
   });
 });
 
+// ВАЖНО: эта функция может вызываться, когда экран Progress ещё СКРЫТ
+// (например, из renderAll() при первой загрузке страницы, пока активен Dashboard).
+// Chart.js должен создаваться только когда canvas реально виден на экране —
+// иначе он получает нулевую высоту и остаётся пустым навсегда (это и было
+// настоящей причиной "полностью пустого" графика). Поэтому здесь считаем
+// только текстовую сводку; сам renderChart() вызывается отдельно —
+// из switchScreen('progress') и сразу после сохранения нового измерения,
+// то есть только в моменты, когда экран точно виден.
 function renderProgressScreen() {
-  renderChart();
-  renderMeasurementHistory();
+  renderWeightSummary();
+}
+
+// Сводка по весу всегда считается по ПОЛНОЙ истории измерений (не только последней записи)
+function renderWeightSummary() {
+  const weightPoints = getSortedWeightMeasurements();
+
+  const startEl = document.getElementById('weight-start');
+  const currentEl = document.getElementById('weight-current');
+  const changeEl = document.getElementById('weight-change');
+
+  if (weightPoints.length === 0) {
+    startEl.textContent = '—';
+    currentEl.textContent = '—';
+    changeEl.textContent = '—';
+    return;
+  }
+
+  const start = Number(weightPoints[0].weight);
+  const current = Number(weightPoints[weightPoints.length - 1].weight);
+  const change = Math.round((current - start) * 100) / 100;
+
+  startEl.textContent = `${start} kg`;
+  currentEl.textContent = `${current} kg`;
+  changeEl.textContent = `${change > 0 ? '+' : ''}${change} kg`;
 }
 
 /* ---------------------------------------------------------------------
-   12) RENDER: CALENDAR
+   12) RENDER: CALENDAR — полноценная месячная сетка
    --------------------------------------------------------------------- */
+let calendarViewDate = new Date(); // какой месяц сейчас показан
+
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
 function renderCalendar() {
-  const grid = document.getElementById('contribution-grid');
+  renderCalendarMonth();
+  renderActivityList();
+}
+
+function renderCalendarMonth() {
+  const grid = document.getElementById('calendar-grid');
   grid.innerHTML = '';
 
-  const DAYS = 91; // ~13 недель, как GitHub-календарь
-  const today = new Date();
-  const cells = [];
+  const year = calendarViewDate.getFullYear();
+  const month = calendarViewDate.getMonth(); // 0-11
+  document.getElementById('calendar-month-label').textContent = `${MONTH_NAMES[month]} ${year}`;
 
-  for (let i = DAYS - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const dateStr = d.toISOString().slice(0, 10);
-    let status = state.calendarStatus[dateStr];
+  const firstOfMonth = new Date(year, month, 1);
+  // Понедельник = 0 ... Воскресенье = 6 (неделя начинается с понедельника)
+  const firstWeekday = (firstOfMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const todayDate = todayStr();
 
-    if (!status && dateStr < todayStr() && dateStr >= state.createdAt) {
-      status = 'missed';
-    }
-    cells.push({ dateStr, status });
+  // Пустые ячейки перед 1-м числом, чтобы дни встали под правильный день недели
+  for (let i = 0; i < firstWeekday; i++) {
+    const filler = document.createElement('div');
+    filler.className = 'calendar-day empty-cell';
+    grid.appendChild(filler);
   }
 
-  cells.forEach(c => {
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const status = getDateStatus(dateStr); // 'completed' | 'partial' | 'missed' | null
+
     const cell = document.createElement('div');
-    cell.className = 'contribution-cell' + (c.status ? ` ${c.status}` : '');
-    cell.title = `${formatDateHuman(c.dateStr)}${c.status ? ' — ' + c.status : ''}`;
-    grid.appendChild(cell);
-  });
+    cell.className = 'calendar-day';
+    if (status === 'completed') cell.classList.add('completed');
+    else if (status === 'partial') cell.classList.add('partial');
+    if (dateStr === todayDate) cell.classList.add('is-today');
 
-  // Лента активности
-  const activityList = document.getElementById('activity-list');
-  if (state.history.length === 0) {
-    activityList.innerHTML = `<div class="stat-label">No workouts logged yet.</div>`;
-  } else {
-    activityList.innerHTML = state.history.slice(0, 20).map(h => `
-      <div class="activity-row">
-        <div>
-          <div class="a-name">${escapeHtml(h.trainingName)}</div>
-          <div class="a-date">${formatDateHuman(h.date)}</div>
-        </div>
-        <div class="a-xp">+${h.xp} XP</div>
-      </div>
-    `).join('');
+    cell.textContent = day;
+    cell.title = `${formatDateHuman(dateStr)}${status ? ' — ' + status : ''}`;
+    cell.addEventListener('click', () => openDayDetail(dateStr));
+    grid.appendChild(cell);
   }
+}
+
+document.getElementById('btn-cal-prev').addEventListener('click', () => {
+  calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() - 1, 1);
+  renderCalendarMonth();
+});
+document.getElementById('btn-cal-next').addEventListener('click', () => {
+  calendarViewDate = new Date(calendarViewDate.getFullYear(), calendarViewDate.getMonth() + 1, 1);
+  renderCalendarMonth();
+});
+
+// Лента активности — читается напрямую из workouts (единый источник правды), новые записи сверху
+function renderActivityList() {
+  const activityList = document.getElementById('activity-list');
+  const sortedWorkouts = [...state.workouts].sort((a, b) => b.date.localeCompare(a.date));
+
+  if (sortedWorkouts.length === 0) {
+    activityList.innerHTML = `<div class="stat-label">No workouts logged yet.</div>`;
+    return;
+  }
+
+  activityList.innerHTML = sortedWorkouts.slice(0, 20).map(w => `
+    <div class="activity-row activity-row-clickable" data-date="${w.date}">
+      <div>
+        <div class="a-name">${escapeHtml(w.type)} Workout</div>
+        <div class="a-date">${formatDateHuman(w.date)} · ${w.completed ? 'Completed' : 'Partial'}</div>
+      </div>
+      <div class="a-xp">+${w.xp} XP</div>
+    </div>
+  `).join('');
+
+  activityList.querySelectorAll('.activity-row-clickable').forEach(row => {
+    row.addEventListener('click', () => openDayDetail(row.dataset.date));
+  });
+}
+
+// Показывает модалку с деталями тренировки за конкретный день (клик по календарю или ленте)
+function openDayDetail(dateStr) {
+  const workout = getWorkoutForDate(dateStr);
+
+  if (!workout) {
+    openModal(formatDateHuman(dateStr), `
+      <p style="color:var(--text-secondary); font-size:14px;">No training logged for this day.</p>
+    `);
+    return;
+  }
+
+  const exercisesHtml = workout.exercises.length === 0
+    ? `<p style="color:var(--text-secondary); font-size:13px;">No exercise breakdown saved for this workout.</p>`
+    : workout.exercises.map(e => `
+        <div class="measurement-row">
+          <span class="m-date">${escapeHtml(e.name)}</span>
+          <span class="m-value">${e.completed ? '✓ done' : '— skipped'}</span>
+        </div>
+      `).join('');
+
+  openModal(formatDateHuman(dateStr), `
+    <div class="field"><span>Workout</span><div style="font-size:16px; font-weight:700;">${escapeHtml(workout.type)}</div></div>
+    <div class="field"><span>Status</span><div style="font-size:16px; font-weight:700; color:${workout.completed ? 'var(--green)' : 'var(--yellow)'};">${workout.completed ? 'Completed' : 'Partial'}</div></div>
+    <div class="field"><span>Exercises</span></div>
+    <div class="measurement-history">${exercisesHtml}</div>
+  `);
 }
 
 /* ---------------------------------------------------------------------
