@@ -119,21 +119,28 @@
         <button class="btn-icon" id="btn-add-measurement" title="Add measurement">+</button>
       </div>
 
-      <div class="card chart-card">
-        <div class="metric-tabs" id="metric-tabs">
-          <button class="metric-tab active" data-metric="weight">Weight</button>
-          <button class="metric-tab" data-metric="height">Height</button>
-          <button class="metric-tab" data-metric="strength">Strength</button>
-          <button class="metric-tab" data-metric="speed">Speed</button>
-          <button class="metric-tab" data-metric="jump">Jump</button>
-          <button class="metric-tab" data-metric="stickhandling">Stick time</button>
+      <!-- Сводка по весу: всегда берётся из ПОЛНОЙ истории измерений -->
+      <div class="stats-grid weight-summary-grid">
+        <div class="card stat-card">
+          <div class="stat-value" id="weight-start">—</div>
+          <div class="stat-label">Starting weight</div>
         </div>
-        <canvas id="progress-chart" height="220"></canvas>
+        <div class="card stat-card">
+          <div class="stat-value" id="weight-current">—</div>
+          <div class="stat-label">Current weight</div>
+        </div>
+        <div class="card stat-card">
+          <div class="stat-value" id="weight-change">—</div>
+          <div class="stat-label">Change</div>
+        </div>
       </div>
 
-      <div class="card">
-        <div class="card-label">History</div>
-        <div class="measurement-history" id="measurement-history"></div>
+      <div class="card chart-card">
+        <div class="card-label">Weight progress</div>
+        <div class="chart-wrap">
+          <canvas id="progress-chart"></canvas>
+          <p class="chart-empty-state" id="chart-empty-state">No weight data yet</p>
+        </div>
       </div>
 
     </section>
@@ -144,9 +151,20 @@
         <div class="calendar-legend">
           <span><i class="dot dot-completed"></i>Completed</span>
           <span><i class="dot dot-partial"></i>Partial</span>
-          <span><i class="dot dot-missed"></i>Missed</span>
+          <span><i class="dot dot-empty"></i>No workout</span>
         </div>
-        <div class="contribution-grid" id="contribution-grid"></div>
+
+        <div class="calendar-month-header">
+          <button class="btn-icon" id="btn-cal-prev">‹</button>
+          <div class="calendar-month-label" id="calendar-month-label">July 2026</div>
+          <button class="btn-icon" id="btn-cal-next">›</button>
+        </div>
+
+        <div class="calendar-weekdays">
+          <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span>
+        </div>
+
+        <div class="calendar-grid" id="calendar-grid"></div>
       </div>
 
       <div class="card">
